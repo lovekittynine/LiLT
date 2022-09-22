@@ -105,6 +105,7 @@ class LiLTRobertaLikeTextEmbeddings(nn.Module):
 class LiLTRobertaLikeLayoutEmbeddings(nn.Module):
     def __init__(self, config):
         super(LiLTRobertaLikeLayoutEmbeddings, self).__init__()
+        # 坐标嵌入layer[EmbeddingLayer]
         self.x_position_embeddings = nn.Embedding(config.max_2d_position_embeddings, config.hidden_size // 6)
         self.y_position_embeddings = nn.Embedding(config.max_2d_position_embeddings, config.hidden_size // 6)
         self.h_position_embeddings = nn.Embedding(config.max_2d_position_embeddings, config.hidden_size // 6)
