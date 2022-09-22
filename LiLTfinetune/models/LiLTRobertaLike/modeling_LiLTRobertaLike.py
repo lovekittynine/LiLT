@@ -103,15 +103,21 @@ class LiLTRobertaLikeTextEmbeddings(nn.Module):
 
 
 class LiLTRobertaLikeLayoutEmbeddings(nn.Module):
+    """
+    Layerout Embedding层: 构造transformer block的embedding序列输入
+    """
     def __init__(self, config):
         super(LiLTRobertaLikeLayoutEmbeddings, self).__init__()
         # 坐标嵌入layer[EmbeddingLayer]
+        # 坐标范围离散化到0~1000
         self.x_position_embeddings = nn.Embedding(config.max_2d_position_embeddings, config.hidden_size // 6)
         self.y_position_embeddings = nn.Embedding(config.max_2d_position_embeddings, config.hidden_size // 6)
         self.h_position_embeddings = nn.Embedding(config.max_2d_position_embeddings, config.hidden_size // 6)
         self.w_position_embeddings = nn.Embedding(config.max_2d_position_embeddings, config.hidden_size // 6)
 
         self.padding_idx = config.pad_token_id
+        # bbox位置嵌入[position embedding layer]
+        # torch.nn.Embedding细节: 设置padding_idx参数时, padding_idx对应的token embedding在训练时不会更新
         self.box_position_embeddings = nn.Embedding(
             config.max_position_embeddings, config.hidden_size//config.channel_shrink_ratio, padding_idx=self.padding_idx
         )
@@ -148,10 +154,12 @@ class LiLTRobertaLikeLayoutEmbeddings(nn.Module):
             dim=-1,
         )
         spatial_position_embeddings = self.box_linear_embeddings(spatial_position_embeddings)
+        # 获取bbox的位置嵌入
         box_position_embeddings = self.box_position_embeddings(position_ids)
 
         spatial_position_embeddings = spatial_position_embeddings + box_position_embeddings 
 
+        # 细节:获取输入token embedding后, 接一层layerNorm变换
         spatial_position_embeddings = self.LayerNorm(spatial_position_embeddings)
         spatial_position_embeddings = self.dropout(spatial_position_embeddings)
 
@@ -166,15 +174,19 @@ class LiLTRobertaLikeSelfAttention(nn.Module):
                 f"The hidden size ({config.hidden_size}) is not a multiple of the number of attention "
                 f"heads ({config.num_attention_heads})"
             )
-
+        
+        # attention头数
         self.num_attention_heads = config.num_attention_heads
+        # 每个头特征维度
         self.attention_head_size = int(config.hidden_size / config.num_attention_heads)
         self.all_head_size = self.num_attention_heads * self.attention_head_size
 
+        # Token: query, key, value进行一次linear变换
         self.query = nn.Linear(config.hidden_size, self.all_head_size)
         self.key = nn.Linear(config.hidden_size, self.all_head_size)
         self.value = nn.Linear(config.hidden_size, self.all_head_size)
 
+        # LayerOut: query, key, value进行一次linear变换
         self.layout_query = nn.Linear(config.hidden_size // config.channel_shrink_ratio, self.all_head_size // config.channel_shrink_ratio)
         self.layout_key = nn.Linear(config.hidden_size // config.channel_shrink_ratio, self.all_head_size // config.channel_shrink_ratio)
         self.layout_value = nn.Linear(config.hidden_size // config.channel_shrink_ratio, self.all_head_size // config.channel_shrink_ratio)
@@ -205,6 +217,7 @@ class LiLTRobertaLikeSelfAttention(nn.Module):
         output_attentions=False,
     ):
 
+        # layerout q,k,v projection
         layout_value_layer = self.transpose_for_scores(self.layout_value(layout_inputs), r=self.channel_shrink_ratio)
         layout_key_layer = self.transpose_for_scores(self.layout_key(layout_inputs), r=self.channel_shrink_ratio)
         layout_query_layer = self.transpose_for_scores(self.layout_query(layout_inputs), r=self.channel_shrink_ratio)
@@ -253,6 +266,8 @@ class LiLTRobertaLikeSelfAttention(nn.Module):
             seq_length = hidden_states.size()[1]
             position_ids_l = torch.arange(seq_length, dtype=torch.long, device=hidden_states.device).view(-1, 1)
             position_ids_r = torch.arange(seq_length, dtype=torch.long, device=hidden_states.device).view(1, -1)
+            # 细节: 这种方式的二维相对位置编码的索引表会出现索引不唯一的情况
+            # 可以借鉴swinTransformer中二维相对位置编码的做法, 使索引唯一, 但是embeddingLayer的词汇大小是"L平方级"增大
             distance = position_ids_l - position_ids_r
             positional_embedding = self.distance_embedding(distance + self.max_position_embeddings - 1)
             positional_embedding = positional_embedding.to(dtype=query_layer.dtype)  # fp16 compatibility
@@ -320,6 +335,9 @@ class LiLTRobertaLikeSelfAttention(nn.Module):
 
 
 class LiLTRobertaLikeSelfOutput(nn.Module):
+    """
+    self-attention后的输出层: 多头结果进行一次线性融合
+    """
     def __init__(self, config):
         super().__init__()
         self.dense = nn.Linear(config.hidden_size, config.hidden_size)
